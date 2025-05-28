@@ -1916,6 +1916,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
+        logits_to_keep: Union[int, torch.Tensor] = 0,
     ) -> Union[Tuple, Qwen2_5_VLCausalLMOutputWithPast]:
         r"""
         labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
@@ -1934,6 +1935,12 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             The rope index difference between sequence length and multimodal rope.
         second_per_grid_ts (`torch.Tensor` of shape `(num_videos)`, *optional*):
             The time interval (in seconds) for each grid along the temporal dimension in the 3D position IDs.
+        logits_to_keep (Union[int, torch.Tensor], defaults to 0):
+            If an int, compute logits for the last logits_to_keep tokens. If 0, calculate logits for all input_ids (special case).
+            Only last token logits are needed for generation, and calculating them only for that token can save memory,
+            which becomes pretty significant for long sequences or large vocabulary size. If a torch.Tensor, must be 1D 
+            corresponding to the indices to keep in the sequence length dimension. This is useful when using packed tensor 
+            format (single dimension for batch and sequence length).
 
         Example:
 
@@ -1991,7 +1998,12 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         )
 
         hidden_states = outputs[0]
-        logits = self.lm_head(hidden_states)
+        # Only compute necessary logits, and do not upcast them to float if we are not computing the loss
+        if logits_to_keep != 0:
+            slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+            logits = self.lm_head(hidden_states[:, slice_indices, :])
+        else:
+            logits = self.lm_head(hidden_states)
 
         loss = None
         if labels is not None:
